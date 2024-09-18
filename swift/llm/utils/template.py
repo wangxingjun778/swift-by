@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from packaging import version
+from peft import PeftModel
 from torch.nn.utils.rnn import pad_sequence
 from transformers import PreTrainedTokenizerBase, StoppingCriteria
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
@@ -49,6 +50,7 @@ class TemplateType:
     qwen2_audio = 'qwen2-audio'
     qwen2_audio_generation = 'qwen2-audio-generation'
     qwen2_vl = 'qwen2-vl'
+    qwen2_vl_generation = 'qwen2-vl-generation'
     modelscope_agent = 'modelscope-agent'
     baichuan = 'baichuan'
     chatglm2 = 'chatglm2'
@@ -328,7 +330,11 @@ class Template:
                 if 'inputs_embeds' in kwargs:
                     kwargs.pop('input_ids', None)
 
-            parameters = inspect.signature(module.forward).parameters
+            if isinstance(module, PeftModel):
+                parameters = inspect.signature(module.base_model.model.forward).parameters
+            else:
+                parameters = inspect.signature(module.forward).parameters
+
             if 'position_ids' not in parameters:
                 kwargs.pop('position_ids', None)
             return args, kwargs
@@ -715,7 +721,14 @@ class Template:
         objects = example.get('objects')
         if objects:
             object_ = objects[index]
-            return [f'({object_["bbox"][0]},{object_["bbox"][1]}),({object_["bbox"][2]},{object_["bbox"][3]})']
+            if isinstance(object_['bbox'][0], list):
+                all_objects = ''
+                for sub_object in object_['bbox']:
+                    all_objects += (f'[({sub_object[0]},{sub_object[1]}),' f'({sub_object[2]},{sub_object[3]})],')
+                all_objects = all_objects[:-1]
+                return [all_objects]
+            else:
+                return [f'[({object_["bbox"][0]},{object_["bbox"][1]}),({object_["bbox"][2]},{object_["bbox"][3]})]']
         else:
             return ['<bbox>']
 
@@ -733,10 +746,19 @@ class Template:
                 if to_type == 'real':
                     continue
                 width, height = image.width, image.height
-                object['bbox'] = [
-                    int(coord / dim * 999) if to_type == 'norm_1000' else coord / dim
-                    for coord, dim in zip(bbox, [width, height, width, height])
-                ]
+                if isinstance(bbox[0], list):
+                    bboxes = []
+                    for _box in bbox:
+                        bboxes.append([
+                            int(coord / dim * 999) if to_type == 'norm_1000' else coord / dim
+                            for coord, dim in zip(_box, [width, height, width, height])
+                        ])
+                    object['bbox'] = bboxes
+                else:
+                    object['bbox'] = [
+                        int(coord / dim * 999) if to_type == 'norm_1000' else coord / dim
+                        for coord, dim in zip(bbox, [width, height, width, height])
+                    ]
                 object['bbox_type'] = to_type
             elif bbox_type == 'norm_1000':
                 if to_type == 'norm_1000':
@@ -1230,7 +1252,16 @@ class _QwenVLTemplateMixin:
     def replace_box(self, index: int, example: Dict[str, Any]) -> List[Context]:
         objects = example['objects']
         object_ = objects[index]
-        return [f'<box>({object_["bbox"][0]},{object_["bbox"][1]}),({object_["bbox"][2]},{object_["bbox"][3]})</box>']
+        if isinstance(object_['bbox'][0], list):
+            all_objects = ''
+            for sub_object in object_['bbox']:
+                all_objects += (f'<box>({sub_object[0]},{sub_object[1]}),' f'({sub_object[2]},{sub_object[3]})</box>')
+            return [all_objects]
+        else:
+            return [
+                f'<box>({object_["bbox"][0]},{object_["bbox"][1]}),'
+                f'({object_["bbox"][2]},{object_["bbox"][3]})</box>'
+            ]
 
 
 register_template(TemplateType.qwen, QwenTemplate())
@@ -1352,6 +1383,9 @@ class Qwen2AudioGenerationTemplate(_Qwen2AudioTemplateMixin, DefaultGenerationTe
 
 register_template(TemplateType.qwen2_audio, Qwen2AudioTemplate(), lazy_tokenize=True)
 
+register_template(
+    TemplateType.qwen2_audio_generation, Qwen2AudioGenerationTemplate(), lazy_tokenize=True, is_generation=True)
+
 
 def _process_image_qwen(image):
     from qwen_vl_utils.vision_process import IMAGE_FACTOR, MIN_PIXELS, MAX_PIXELS, smart_resize
@@ -1380,7 +1414,7 @@ def _process_image_qwen(image):
     return image
 
 
-class Qwen2VLTemplate(QwenTemplate):
+class _Qwen2VLTemplateMixin:
 
     def replace_tag(self, media_type: Literal['image', 'video', 'audio'], index: int,
                     example: Dict[str, Any]) -> List[Context]:
@@ -1402,10 +1436,17 @@ class Qwen2VLTemplate(QwenTemplate):
         objects = example.get('objects')
         if objects:
             object_ = objects[index]
-            return [
-                f'<|box_start|>({object_["bbox"][0]},{object_["bbox"][1]}),'
-                f'({object_["bbox"][2]},{object_["bbox"][3]})<|box_end|>'
-            ]
+            if isinstance(object_['bbox'][0], list):
+                all_objects = ''
+                for sub_object in object_['bbox']:
+                    all_objects += (f'<|box_start|>({sub_object[0]},{sub_object[1]}),'
+                                    f'({sub_object[2]},{sub_object[3]})<|box_end|>')
+                return [all_objects]
+            else:
+                return [
+                    f'<|box_start|>({object_["bbox"][0]},{object_["bbox"][1]}),'
+                    f'({object_["bbox"][2]},{object_["bbox"][3]})<|box_end|>'
+                ]
         else:
             return ['<bbox>']
 
@@ -1454,13 +1495,25 @@ class Qwen2VLTemplate(QwenTemplate):
             grid_thw = [b[f'{media_type}_grid_thw'] for b in batch if b.get(f'{media_type}_grid_thw') is not None]
             if grid_thw:
                 res[f'{media_type}_grid_thw'] = torch.concat(grid_thw)
+        if 'input_ids' in res:
+            # fix https://github.com/huggingface/transformers/pull/33487
+            position_ids, _ = self.model.get_rope_index(res['input_ids'], res.get('image_grid_thw'),
+                                                        res.get('video_grid_thw'), res['attention_mask'])
+            res['position_ids'] = position_ids.contiguous()
         return res
+
+
+class Qwen2VLTemplate(_Qwen2VLTemplateMixin, QwenTemplate):
+    pass
+
+
+class Qwen2VLGenerationTemplate(_Qwen2VLTemplateMixin, DefaultGenerationTemplate):
+    pass
 
 
 register_template(TemplateType.qwen2_vl, Qwen2VLTemplate(), lazy_tokenize=True)
 
-register_template(
-    TemplateType.qwen2_audio_generation, Qwen2AudioGenerationTemplate(), lazy_tokenize=True, is_generation=True)
+register_template(TemplateType.qwen2_vl_generation, Qwen2VLGenerationTemplate(), lazy_tokenize=True, is_generation=True)
 
 
 class YiCoderTemplate(ChatmlTemplate):
@@ -1654,11 +1707,17 @@ class Llama3TemplateMixin:
     system = None
 
     def __init__(self):
-        Template.__init__(self, ['<|begin_of_text|>'], [
-            '<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|>'
-            '<|start_header_id|>assistant<|end_header_id|>\n\n'
-        ], ['<|eot_id|>'], ['<|eot_id|>'], self.system,
-                          ['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'])
+        Template.__init__(
+            self, ['<|begin_of_text|>'], [
+                '<|start_header_id|>user<|end_header_id|>\n\n{{QUERY}}<|eot_id|>'
+                '<|start_header_id|>assistant<|end_header_id|>\n\n'
+            ], ['<|eot_id|>'], ['<|eot_id|>'],
+            self.system, ['<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{{SYSTEM}}<|eot_id|>'],
+            tools_prompt='toolbench',
+            tool_prompt=[
+                '<|start_header_id|>tool<|end_header_id|>\n\n{{QUERY}}<|eot_id|>'
+                '<|start_header_id|>assistant<|end_header_id|>\n\n'
+            ])
 
 
 class Llama3Template(Llama3TemplateMixin, Template):
@@ -2010,10 +2069,18 @@ class Internvl2Template(InternvlTemplate):
         objects = example.get('objects')
         if objects:
             object_ = objects[index]
-            return [
-                f'<box> [[{object_["bbox"][0]}, {object_["bbox"][1]}, '
-                f'{object_["bbox"][2]}, {object_["bbox"][3]}]] </box>'
-            ]
+            if isinstance(object_['bbox'][0], list):
+                all_objects = '<box> ['
+                for sub_object in object_['bbox']:
+                    all_objects += (f'[{sub_object[0]}, {sub_object[1]}, ' f'{sub_object[2]}, {sub_object[3]}],')
+                all_objects = all_objects[:-1]
+                all_objects += '] </box>'
+                return [all_objects]
+            else:
+                return [
+                    f'<box> [[{object_["bbox"][0]}, {object_["bbox"][1]}, '
+                    f'{object_["bbox"][2]}, {object_["bbox"][3]}]] </box>'
+                ]
         else:
             return ['<bbox>']
 
@@ -2116,8 +2183,16 @@ class FlorenceTemplate(Template):
         return
 
     def replace_box(self, index: int, example: Dict[str, Any]) -> List[Context]:
-        x1, y1, x2, y2 = example['objects'][index]['bbox']
-        return [f'<loc_{x1}><loc_{y1}><loc_{x2}><loc_{y2}>']
+        object_ = example['objects'][index]
+        if isinstance(object_['bbox'][0], list):
+            all_objects = ''
+            for sub_object in object_['bbox']:
+                x1, y1, x2, y2 = sub_object
+                all_objects += f'<loc_{x1}><loc_{y1}><loc_{x2}><loc_{y2}>,'
+            return [all_objects[:-1]]
+        else:
+            x1, y1, x2, y2 = object_['bbox']
+            return [f'<loc_{x1}><loc_{y1}><loc_{x2}><loc_{y2}>']
 
     def _encode(self, example: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         query = example['query']
@@ -2637,8 +2712,8 @@ register_template(TemplateType.phi3_vl, Phi3VisionTemplate(), lazy_tokenize=True
 
 class Llama3LlavaNextTemplate(Llama3TemplateMixin, LLavaTemplate):
     system = 'You are a helpful language and vision assistant. ' \
-                     'You are able to understand the visual content that the user provides, ' \
-                     'and assist the user with a variety of tasks using natural language.'
+             'You are able to understand the visual content that the user provides, ' \
+             'and assist the user with a variety of tasks using natural language.'
 
 
 register_template(TemplateType.llama3_llava_next, Llama3LlavaNextTemplate(), use_model=True, lazy_tokenize=True)
@@ -3215,6 +3290,16 @@ class mPlugOwl3Template(QwenTemplateMixin, Template):
     def _post_encode(self, model, data: Any) -> Dict[str, Any]:
         image_embeds = model.forward_image(data['pixel_values'])
         return {'image_embeds': image_embeds}
+
+    def data_collator(self, batch: List[Dict[str, Any]], padding_to: Optional[int] = None) -> Dict[str, Any]:
+        res = super().data_collator(batch, padding_to)
+        image_embeds = [b['image_embeds'] for b in batch if 'image_embeds' in b]
+        if image_embeds:
+            res['image_embeds'] = torch.concat(image_embeds)
+        media_offset = [b['media_offset'] for b in batch if 'media_offset' in b]
+        if media_offset:
+            res['media_offset'] = torch.concat(media_offset)
+        return res
 
 
 register_template(TemplateType.mplug_owl3, mPlugOwl3Template(), use_model=True, lazy_tokenize=True)
