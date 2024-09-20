@@ -45,6 +45,7 @@ class TemplateType:
     # chat
     default = 'default'
     qwen = 'qwen'
+    qwen2_5 = 'qwen2_5'
     qwen_vl = 'qwen-vl'
     qwen_audio = 'qwen-audio'
     qwen2_audio = 'qwen2-audio'
@@ -137,6 +138,8 @@ class TemplateType:
     chatml = 'chatml'
     # compatibility. (Deprecated)
     default_generation_bos = 'default-generation-bos'
+    yi = 'yi'
+    yi1_5 = 'yi1_5'
 
     @classmethod
     def get_template_name_list(cls) -> List[str]:
@@ -1227,7 +1230,7 @@ class _QwenVLTemplateMixin:
     load_medias = False
 
     def check_example(self, example):
-        if self._is_lmdeploy:
+        if self._is_lmdeploy or self._is_vllm:
             return
         images = example.get('images') or []
         from .utils import fetch_one
@@ -1237,12 +1240,15 @@ class _QwenVLTemplateMixin:
                     example: Dict[str, Any]) -> List[Context]:
         assert media_type == 'image'
         if self._is_lmdeploy:
-            return [f'Picture {index + 1}:', [-100], '\n']
+            return [f'Picture {index + 1}: ', [-100], '\n']
         else:
             images = example.get('images') or []
             image = images[index]
-            assert isinstance(image, str)
-            return [f'Picture {index + 1}:<img>{image}</img>\n']
+            if self._is_vllm:
+                return [f'Picture {index + 1}: <img></img>\n']
+            else:
+                assert isinstance(image, str)
+                return [f'Picture {index + 1}: <img>{image}</img>\n']
 
     def replace_object(self, index: int, example: Dict[str, Any]) -> List[Context]:
         objects = example['objects']
@@ -1264,7 +1270,12 @@ class _QwenVLTemplateMixin:
             ]
 
 
+class Qwen2_5Template(QwenTemplate):
+    system = 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.'
+
+
 register_template(TemplateType.qwen, QwenTemplate())
+register_template(TemplateType.qwen2_5, Qwen2_5Template())
 
 
 class QwenVLTemplate(_QwenVLTemplateMixin, QwenTemplate):
@@ -1279,6 +1290,8 @@ register_template(TemplateType.qwen_vl, QwenVLTemplate())
 register_template(TemplateType.qwen_vl_generation, QwenVLGenerationTemplate())
 
 register_template(TemplateType.chatml, ChatmlTemplate())
+register_template(TemplateType.yi, ChatmlTemplate())
+register_template(TemplateType.yi1_5, ChatmlTemplate())
 
 register_template(
     TemplateType.modelscope_agent,
@@ -3333,6 +3346,8 @@ class RLHFTemplateMixin:
             chosen_inputs, chosen_tokenizer_kwargs = template_encode(chosen_example)
             rejected_inputs, rejected_tokenizer_kwargs = template_encode(rejected_example)
 
+        if len(chosen_inputs) == 0 or len(rejected_inputs) == 0:
+            return {}, {}
         for suffix, res in zip(['inputs', 'tokenizer_kwargs'], [inputs, tokenizer_kwargs]):
             for prefix in ['chosen', 'rejected']:
                 data = locals()[f'{prefix}_{suffix}']

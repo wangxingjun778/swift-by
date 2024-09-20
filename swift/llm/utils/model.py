@@ -183,6 +183,8 @@ class ModelType:
     qwen2_5_math_7b_instruct = 'qwen2_5-math-7b-instruct'
     qwen2_5_math_72b_instruct = 'qwen2_5-math-72b-instruct'
     # qwen2.5 coder
+    qwen2_5_coder_1_5b = 'qwen2_5-coder-1_5b'
+    qwen2_5_coder_1_5b_instruct = 'qwen2_5-coder-1_5b-instruct'
     qwen2_5_coder_7b = 'qwen2_5-coder-7b'
     qwen2_5_coder_7b_instruct = 'qwen2_5-coder-7b-instruct'
     # qwen-vl
@@ -482,6 +484,7 @@ class ModelType:
     mistral_nemo_base_2407 = 'mistral-nemo-base-2407'
     mistral_nemo_instruct_2407 = 'mistral-nemo-instruct-2407'
     mistral_large_instruct_2407 = 'mistral-large-instruct-2407'
+    mistral_small_instruct_2409 = 'mistral-small-instruct-2409'
     mixtral_moe_7b = 'mixtral-moe-7b'
     mixtral_moe_7b_instruct = 'mixtral-moe-7b-instruct'
     mixtral_moe_7b_aqlm_2bit_1x16 = 'mixtral-moe-7b-aqlm-2bit-1x16'  # aqlm
@@ -1919,7 +1922,7 @@ def get_model_tokenizer_glm4v(model_dir: str,
     TemplateType.phi3,
     requires=['transformers>=4.36'],
     support_flash_attn=True,
-    support_vllm=False,
+    support_vllm=True,
     tags=['moe'],
     hf_model_id='microsoft/Phi-3.5-MoE-instruct')
 @register_model(
@@ -2621,6 +2624,16 @@ def get_model_tokenizer_glm4v(model_dir: str,
     support_flash_attn=True,
     support_vllm=True,
     hf_model_id='mistralai/Mistral-Large-Instruct-2407')
+@register_model(
+    ModelType.mistral_small_instruct_2409,
+    'AI-ModelScope/Mistral-Small-Instruct-2409',
+    LoRATM.llama,
+    TemplateType.mistral_nemo,
+    requires=['transformers>=4.43'],
+    ignore_file_pattern=['^consolidated'],
+    support_flash_attn=True,
+    support_vllm=True,
+    hf_model_id='mistralai/Mistral-Small-Instruct-2409')
 @register_model(
     ModelType.mistral_nemo_instruct_2407,
     'AI-ModelScope/Mistral-Nemo-Instruct-2407',
@@ -3465,7 +3478,7 @@ for model_size in ['0.5B', '1.5B', '3B', '7B', '14B', '32B', '72B']:
         f'qwen2_5-{model_size_lower}-instruct',
         f'qwen/Qwen2.5-{model_size}-Instruct',
         LoRATM.llama,
-        TemplateType.qwen,
+        TemplateType.qwen2_5,
         get_model_tokenizer_qwen2_chat,
         support_flash_attn=True,
         support_vllm=True,
@@ -3479,7 +3492,7 @@ for model_size in ['0.5B', '1.5B', '3B', '7B', '14B', '32B', '72B']:
             f'qwen2_5-{model_size_lower}-instruct-{quant_type_lower}',
             f'qwen/Qwen2.5-{model_size}-Instruct-{quant_type}',
             LoRATM.llama,
-            TemplateType.qwen,
+            TemplateType.qwen2_5,
             get_model_tokenizer_qwen2_chat,
             support_flash_attn=True,
             support_vllm=True,
@@ -3492,7 +3505,7 @@ for model_size in ['0.5B', '1.5B', '3B', '7B', '14B', '32B', '72B']:
         f'qwen2_5-{model_size_lower}-instruct-awq',
         f'qwen/Qwen2.5-{model_size}-Instruct-AWQ',
         LoRATM.llama,
-        TemplateType.qwen,
+        TemplateType.qwen2_5,
         get_model_tokenizer_qwen2_chat,
         support_flash_attn=True,
         support_vllm=True,
@@ -3518,7 +3531,7 @@ for model_size in ['1.5B', '7B', '72B']:
         f'qwen2_5-math-{model_size_lower}-instruct',
         f'qwen/Qwen2.5-Math-{model_size}-Instruct',
         LoRATM.llama,
-        TemplateType.qwen,
+        TemplateType.qwen2_5,
         get_model_tokenizer_qwen2_chat,
         support_flash_attn=True,
         support_vllm=True,
@@ -3526,28 +3539,30 @@ for model_size in ['1.5B', '7B', '72B']:
         requires=['transformers>=4.37'],
         hf_model_id=f'Qwen/Qwen2.5-Math-{model_size}-Instruct')
 
-register_model(
-    'qwen2_5-coder-7b',
-    'qwen/Qwen2.5-Coder-7B',
-    LoRATM.llama,
-    TemplateType.default_generation,
-    get_model_tokenizer_with_flash_attn,
-    support_flash_attn=True,
-    support_vllm=True,
-    support_lmdeploy=True,
-    requires=['transformers>=4.37'],
-    hf_model_id='Qwen/Qwen2.5-Coder-7B')
-register_model(
-    'qwen2_5-coder-7b-instruct',
-    'qwen/Qwen2.5-Coder-7B-Instruct',
-    LoRATM.llama,
-    TemplateType.qwen,
-    get_model_tokenizer_qwen2_chat,
-    support_flash_attn=True,
-    support_vllm=True,
-    support_lmdeploy=True,
-    requires=['transformers>=4.37'],
-    hf_model_id='Qwen/Qwen2.5-Coder-7B-Instruct')
+for model_size in ['1.5B', '7B']:
+    model_size_lower = model_size.lower().replace('.', '_')
+    register_model(
+        f'qwen2_5-coder-{model_size_lower}',
+        f'qwen/Qwen2.5-Coder-{model_size}',
+        LoRATM.llama,
+        TemplateType.default_generation,
+        get_model_tokenizer_with_flash_attn,
+        support_flash_attn=True,
+        support_vllm=True,
+        support_lmdeploy=True,
+        requires=['transformers>=4.37'],
+        hf_model_id=f'Qwen/Qwen2.5-Coder-{model_size}')
+    register_model(
+        f'qwen2_5-coder-{model_size_lower}-instruct',
+        f'qwen/Qwen2.5-Coder-{model_size}-Instruct',
+        LoRATM.llama,
+        TemplateType.qwen2_5,
+        get_model_tokenizer_qwen2_chat,
+        support_flash_attn=True,
+        support_vllm=True,
+        support_lmdeploy=True,
+        requires=['transformers>=4.37'],
+        hf_model_id=f'Qwen/Qwen2.5-Coder-{model_size}-Instruct')
 
 
 @register_model(
@@ -3624,6 +3639,7 @@ for model_size in ['2B', '7B', '72B']:
         TemplateType.qwen2_vl_generation,
         get_model_tokenizer_qwen2_vl,
         support_flash_attn=True,
+        support_vllm=True,
         placeholder_tokens=['<|image_pad|>', '<|video_pad|>'],
         requires=['transformers>=4.45.0.dev0', 'qwen_vl_utils'],
         tags=['multi-modal', 'vision'],
@@ -3635,6 +3651,7 @@ for model_size in ['2B', '7B', '72B']:
         TemplateType.qwen2_vl,
         get_model_tokenizer_qwen2_vl,
         support_flash_attn=True,
+        support_vllm=True,
         placeholder_tokens=['<|image_pad|>', '<|video_pad|>'],
         requires=['transformers>=4.45.0.dev0', 'qwen_vl_utils'],  # 'pyav'
         tags=['multi-modal', 'vision'],
@@ -3649,6 +3666,7 @@ for model_size in ['2B', '7B', '72B']:
             TemplateType.qwen2_vl,
             get_model_tokenizer_qwen2_vl,
             support_flash_attn=True,
+            support_vllm=True,
             placeholder_tokens=['<|image_pad|>', '<|video_pad|>'],
             requires=['transformers>=4.45.0.dev0', 'qwen_vl_utils', 'auto_gptq>=0.5'],
             tags=['multi-modal', 'vision'],
@@ -3663,6 +3681,7 @@ for model_size in ['2B', '7B', '72B']:
         TemplateType.qwen2_vl,
         get_model_tokenizer_qwen2_vl,
         support_flash_attn=True,
+        support_vllm=True,
         placeholder_tokens=['<|image_pad|>', '<|video_pad|>'],
         requires=['transformers>=4.45.0.dev0', 'qwen_vl_utils', 'autoawq'],
         tags=['multi-modal', 'vision'],
@@ -4352,7 +4371,7 @@ def get_model_tokenizer_deepseek2(model_dir: str,
     ignore_file_pattern=[r'.+\.zip$'],
     support_flash_attn=True,
     support_lmdeploy=True,
-    support_vllm=False,
+    support_vllm=True,
     torch_dtype=torch.float16,
     function_kwargs={'is_awq': True},
     placeholder_tokens=['<IMG_CONTEXT>'],
@@ -4367,7 +4386,7 @@ def get_model_tokenizer_deepseek2(model_dir: str,
     ignore_file_pattern=[r'.+\.zip$'],
     support_flash_attn=True,
     support_lmdeploy=True,
-    support_vllm=False,
+    support_vllm=True,
     torch_dtype=torch.float16,
     function_kwargs={'is_awq': True},
     placeholder_tokens=['<IMG_CONTEXT>'],
@@ -4382,7 +4401,7 @@ def get_model_tokenizer_deepseek2(model_dir: str,
     ignore_file_pattern=[r'.+\.zip$'],
     support_flash_attn=True,
     support_lmdeploy=True,
-    support_vllm=False,
+    support_vllm=True,
     torch_dtype=torch.float16,
     function_kwargs={'is_awq': True},
     placeholder_tokens=['<IMG_CONTEXT>'],
@@ -4397,7 +4416,7 @@ def get_model_tokenizer_deepseek2(model_dir: str,
     ignore_file_pattern=[r'.+\.zip$'],
     support_flash_attn=True,
     support_lmdeploy=True,
-    support_vllm=False,
+    support_vllm=True,
     torch_dtype=torch.float16,
     function_kwargs={'is_awq': True},
     placeholder_tokens=['<IMG_CONTEXT>'],
@@ -4412,7 +4431,7 @@ def get_model_tokenizer_deepseek2(model_dir: str,
     ignore_file_pattern=[r'.+\.zip$'],
     support_flash_attn=True,
     support_lmdeploy=True,
-    support_vllm=False,
+    support_vllm=True,
     torch_dtype=torch.float16,
     function_kwargs={'is_awq': True},
     placeholder_tokens=['<IMG_CONTEXT>'],
@@ -5432,6 +5451,7 @@ def _qwen_vl_audio_decode(self, *args, skip_special_tokens=False, **kwargs) -> s
     LoRATM.qwen_vl,
     TemplateType.qwen_vl,
     support_flash_attn=True,
+    support_vllm=True,
     support_lmdeploy=True,
     tags=['multi-modal', 'vision'],
     hf_model_id='Qwen/Qwen-VL-Chat')
@@ -5442,6 +5462,7 @@ def _qwen_vl_audio_decode(self, *args, skip_special_tokens=False, **kwargs) -> s
     TemplateType.qwen_vl_generation,
     function_kwargs={'get_qwen_function': get_model_tokenizer_qwen_base},
     support_flash_attn=True,
+    support_vllm=True,
     support_lmdeploy=True,
     tags=['multi-modal', 'vision'],
     hf_model_id='Qwen/Qwen-VL')
@@ -5597,6 +5618,7 @@ def get_model_tokenizer_qwen_audio(model_dir: str,
         'get_qwen_function': get_model_tokenizer_qwen_vl,
         'gptq_bits': 4
     },
+    support_vllm=True,
     support_flash_attn=True,
     tags=['multi-modal', 'vision'],
     hf_model_id='Qwen/Qwen-VL-Chat-Int4')
